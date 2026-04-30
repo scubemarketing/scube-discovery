@@ -19,35 +19,56 @@ function safeSlice(arr, n) {
 }
 
 // --- Pass 1: Generate search queries -----------------------------------------
-// Ask Claude to produce 3 targeted Shopping queries from the intake form.
-// Q1 = brand/company name (finds their own listings)
-// Q2 = primary product category (finds category competitors)
-// Q3 = specific product brand or model they likely carry (pricing comparison)
+// Claude visits the website first, then generates 3 specific Shopping queries.
+// Web search is enabled so Claude can read actual product names and categories
+// before deciding what to search — prevents generic queries like "automotive parts"
+// when the prospect actually sells "BMW M3 dry carbon fiber mirror caps".
 
 async function generateQueries(name, domain, goal, details, productQuery, anthropicKey) {
-  // If the user provided a product query, use it for Q2 and derive Q1/Q3
-  // around it. If not, let Claude figure out all three.
-  const prompt = `A prospect has submitted an intake form to a paid media agency.
-Company domain: ${domain}
-Contact name: ${name}
-Goal: ${goal}
-Additional details: ${details || "none"}
-${productQuery ? `Salesperson's product query hint: ${productQuery}` : ""}
+  const prompt = `You are preparing Google Shopping search queries to research a prospect company.
 
-Generate exactly 3 Google Shopping search queries to research this prospect:
-Q1: The company name or brand name as a buyer would search it (to find their own listings)
-Q2: Their primary product category (broad term, to find category competitors)
-Q3: A specific product brand, model, or SKU they likely carry (for pricing comparison)
+STEP 1: Search the web for "${domain}" and visit their website. Read their product catalog,
+category names, and specific product titles. You need to understand exactly what they sell
+at the product level before generating any queries.
 
-Rules:
-- Q1 must be the company/brand name, not the domain. Extract it from the domain or details.
-- Q2 should be 2-4 words, high search volume, not brand-specific.
-- Q3 should be a specific product term that a customer would search when ready to buy.
-- If the salesperson provided a product query hint, use it to inform Q2 or Q3.
-- Never use the domain name as a query. Use the brand name instead.
+STEP 2: Generate exactly 3 Google Shopping search queries based on what you actually found:
 
-Return JSON only, no explanation:
-{"q1": "...", "q2": "...", "q3": "...", "brand_name": "..."}`;
+Q1 - Brand name: The exact brand name as a customer would type it to find their products.
+     Extract the real brand name from the website, not the domain string.
+     Example: "Stradawerks" not "stradawerks.com"
+
+Q2 - Specific category + fitment: The most specific product category they sell,
+     including any fitment, material, or application detail that makes it narrow.
+     WRONG: "automotive performance parts" (too broad - 500 brands would appear)
+     WRONG: "carbon fiber parts" (too broad)
+     RIGHT: "BMW M3 carbon fiber mirror caps" (specific enough that direct competitors appear)
+     RIGHT: "dry carbon fiber front lip G8X" (specific to their actual products)
+     The query must be specific enough that this brand OR a direct competitor would
+     plausibly appear in the top 10 Google Shopping results.
+
+Q3 - Specific product: A single product type from their catalog that a buyer searches
+     when ready to purchase. Include brand, material, vehicle fitment, or model number
+     if applicable. This should be even more specific than Q2.
+     WRONG: "coilover suspension kit" (too generic)
+     RIGHT: "Lamborghini Huracan carbon fiber hood" (if they sell that)
+     RIGHT: "G8X BMW M4 dry carbon trunk spoiler" (specific product)
+
+Additional context from intake form:
+- Company domain: ${domain}
+- Contact name: ${name}
+- Goal: ${goal}
+- Additional details: ${details || "none"}
+${productQuery ? `- Salesperson product hint: ${productQuery}` : ""}
+
+CRITICAL RULES:
+- You MUST search the website before generating queries. Do not guess from the domain name.
+- Q2 and Q3 must be specific enough that generic mass-market retailers (Amazon, AutoZone,
+  Walmart) would NOT dominate the results. Niche competitors should appear.
+- If the company sells multiple product lines, pick the one most prominent on their site.
+- brand_name should be the actual brand name as it appears on the website.
+
+Return JSON only, no explanation, no markdown:
+{"q1": "...", "q2": "...", "q3": "...", "brand_name": "...", "product_summary": "one sentence describing what they actually sell based on the website"}`;
 
   try {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -59,22 +80,32 @@ Return JSON only, no explanation:
       },
       body: JSON.stringify({
         model: "claude-sonnet-4-6",
-        max_tokens: 200,
+        max_tokens: 400,
+        tools: [{ type: "web_search_20250305", name: "web_search" }],
         messages: [{ role: "user", content: prompt }],
       }),
     });
     const data = await res.json();
-    const text = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
+    // Extract text blocks only (ignore tool_use and tool_result blocks)
+    const text = (data.content || [])
+      .filter(b => b.type === "text")
+      .map(b => b.text)
+      .join("");
     const clean = text.replace(/```json|```/g, "").trim();
-    return JSON.parse(clean);
+    // Find the JSON object in case there is any surrounding text
+    const jsonStart = clean.indexOf("{");
+    const jsonEnd   = clean.lastIndexOf("}");
+    if (jsonStart === -1) throw new Error("No JSON in response");
+    return JSON.parse(clean.slice(jsonStart, jsonEnd + 1));
   } catch (e) {
     // Fallback: use domain-derived values
     const brand = domain.split(".")[0];
     return {
       q1: brand,
-      q2: productQuery || brand + " products",
+      q2: productQuery || brand,
       q3: productQuery || brand,
       brand_name: brand,
+      product_summary: "Could not fetch website - using domain name as fallback",
     };
   }
 }
@@ -503,8 +534,9 @@ export default async function handler(req, res) {
     // Attach raw data for the frontend raw data panel
     brief._raw = {
       domain,
-      brand_name: brandName,
-      queries: { q1, q2, q3 },
+      brand_name:      brandName,
+      product_summary: queries.product_summary || null,
+      queries:         { q1, q2, q3 },
       shopping: {
         brand:    shoppingBrand,
         category: shoppingCategory,
