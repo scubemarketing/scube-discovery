@@ -61,15 +61,16 @@ async function fetchAdsTransparency(domain, apiKey) {
     const res = await fetch(`${SEARCHAPI_BASE}?${params}`);
     if (!res.ok) return { ads: [], count: 0, error: `HTTP ${res.status}` };
     const data = await res.json();
-    const advertiser = data.advertiser || {};
-    const creatives  = safeSlice(data.ad_creatives || data.ads || [], 8);
+    const creatives = safeSlice(data.ad_creatives || [], 8);
+    const firstAd   = creatives[0] || {};
+    const advertiser = firstAd.advertiser || {};
     return {
       advertiser_name: advertiser.name || domain,
       verified:        advertiser.is_verified || false,
-      count:           advertiser.total_ads || creatives.length,
-      regions:         safeSlice(advertiser.regions || [], 5),
+      count:           data.search_information?.total_results || creatives.length,
+      regions:         [],
       ads: creatives.map(a => ({
-        format:      a.format || a.ad_type || "unknown",
+        format:      a.format || "unknown",
         headline:    a.headline || a.title || "",
         description: a.description || "",
         first_shown: a.first_shown || "",
