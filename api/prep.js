@@ -470,6 +470,8 @@ export default async function handler(req, res) {
   const { q1, q2, q3, brand_name } = queries;
   const brandName = brand_name || domain.split(".")[0];
 
+await new Promise(resolve => setTimeout(resolve, 61000));
+
   // --- Pass 2: All searches in parallel ---
   const [shoppingBrand, shoppingCategory, shoppingProduct, ads, serp] = await Promise.all([
     fetchShopping(q1, SEARCHAPI_KEY),
