@@ -1,6 +1,5 @@
-// api/prep.js — Vercel Serverless Function
+// api/prep.js - Vercel Serverless Function
 // All API keys stay server-side. Never exposed to the browser.
-// Flow: receive form → 3 SearchAPI calls in parallel → Claude interprets → return brief
 
 const SEARCHAPI_BASE = "https://www.searchapi.io/api/v1/search";
 
@@ -17,7 +16,7 @@ function safeSlice(arr, n) {
   return Array.isArray(arr) ? arr.slice(0, n) : [];
 }
 
-// ─── SearchAPI calls ───────────────────────────────────────────────────────────
+// --- SearchAPI calls ---------------------------------------------------------
 
 async function fetchShopping(query, apiKey) {
   const params = new URLSearchParams({
@@ -62,7 +61,7 @@ async function fetchAdsTransparency(domain, apiKey) {
     if (!res.ok) return { ads: [], count: 0, error: `HTTP ${res.status}` };
     const data = await res.json();
     const creatives = safeSlice(data.ad_creatives || [], 8);
-    const firstAd   = creatives[0] || {};
+    const firstAd = creatives[0] || {};
     const advertiser = firstAd.advertiser || {};
     return {
       advertiser_name: advertiser.name || domain,
@@ -74,7 +73,7 @@ async function fetchAdsTransparency(domain, apiKey) {
         headline:    a.headline || a.title || "",
         description: a.description || "",
         first_shown: a.first_shown || "",
-        last_shown:  a.last_shown  || "",
+        last_shown:  a.last_shown || "",
       })),
     };
   } catch (e) {
@@ -96,13 +95,20 @@ async function fetchSERP(domain, apiKey) {
     const data = await res.json();
     return {
       shopping_ads: safeSlice(data.shopping_ads || [], 6).map(a => ({
-        title: a.title, seller: a.seller, price: a.price, position: a.position,
+        title:    a.title,
+        seller:   a.seller,
+        price:    a.price,
+        position: a.position,
       })),
       organic: safeSlice(data.organic_results || [], 4).map(r => ({
-        title: r.title, link: r.link, snippet: r.snippet,
+        title:   r.title,
+        link:    r.link,
+        snippet: r.snippet,
       })),
       ads: safeSlice(data.ads || [], 4).map(a => ({
-        title: a.title, description: a.description, link: a.displayed_link,
+        title:       a.title,
+        description: a.description,
+        link:        a.displayed_link,
       })),
       knowledge_graph: data.knowledge_graph ? {
         title:       data.knowledge_graph.title,
@@ -117,7 +123,7 @@ async function fetchSERP(domain, apiKey) {
   }
 }
 
-// ─── Format data for Claude ────────────────────────────────────────────────────
+// --- Format data for Claude --------------------------------------------------
 
 function buildDataBlock(domain, query, shopping, ads, serp) {
   const lines = ["=== REAL DATA COLLECTED ===\n"];
@@ -127,7 +133,7 @@ function buildDataBlock(domain, query, shopping, ads, serp) {
     shopping.results.forEach(r => {
       lines.push(
         `  #${r.position} | ${r.title} | ${r.price} | Seller: ${r.seller}` +
-        (r.rating  ? ` | ${r.rating}★ (${r.reviews || 0} reviews)` : "") +
+        (r.rating   ? ` | ${r.rating} stars (${r.reviews || 0} reviews)` : "") +
         (r.delivery ? ` | ${r.delivery}` : "")
       );
     });
@@ -139,8 +145,8 @@ function buildDataBlock(domain, query, shopping, ads, serp) {
   lines.push(`\n[2] GOOGLE ADS TRANSPARENCY  domain: ${domain}`);
   lines.push(`  Active ads: ${ads.count}`);
   lines.push(`  Verified advertiser: ${ads.verified ? "yes" : "no"}`);
-  if (ads.regions && ads.regions.length > 0) {
-    lines.push(`  Regions: ${ads.regions.join(", ")}`);
+  if (ads.advertiser_name) {
+    lines.push(`  Advertiser name on file: ${ads.advertiser_name}`);
   }
   if (ads.ads && ads.ads.length > 0) {
     ads.ads.forEach((a, i) => {
@@ -172,8 +178,8 @@ function buildDataBlock(domain, query, shopping, ads, serp) {
   if (serp.knowledge_graph) {
     const kg = serp.knowledge_graph;
     lines.push(
-      `  Knowledge graph: ${kg.title} — ${kg.type}` +
-      (kg.rating ? ` — ${kg.rating}★ (${kg.reviews} reviews)` : "")
+      `  Knowledge graph: ${kg.title} - ${kg.type}` +
+      (kg.rating ? ` - ${kg.rating} stars (${kg.reviews} reviews)` : "")
     );
     if (kg.description) lines.push(`  Description: ${kg.description}`);
   } else {
@@ -183,39 +189,39 @@ function buildDataBlock(domain, query, shopping, ads, serp) {
   return lines.join("\n");
 }
 
-// ─── Claude system prompt ──────────────────────────────────────────────────────
+// --- Claude system prompt ----------------------------------------------------
 
-const CLAUDE_SYSTEM = `You are a senior paid media strategist at SCUBE Marketing — a Chicago agency specialising in Google Ads, product feeds, and analytics for catalog-heavy ecommerce (automotive, HVAC, industrial, cycling, marine, tools, and similar spec-driven verticals).
+const CLAUDE_SYSTEM = `You are a senior paid media strategist at SCUBE Marketing - a Chicago agency specialising in Google Ads, product feeds, and analytics for catalog-heavy ecommerce (automotive, HVAC, industrial, cycling, marine, tools, and similar spec-driven verticals).
 
 You have a prospect intake form and REAL DATA from three live API calls: Google Shopping results, Google Ads Transparency Center, and Google SERP. Use this real data as your primary evidence. Do not guess what you can read. Do not estimate what you can calculate from the data.
 
 THE 10 SCENARIO TYPES:
-1. ROAS-constrained — High ROAS target suppressing bids, pricing them out of auctions. Revenue declining while ROAS looks fine.
-2. Burned by previous agency — CVR or revenue dropped under prior management. Skeptical. Wants evidence not promises.
-3. Aggressive revenue goal — Target requires KPI improvement the data does not support. Board or investor-set number.
-4. Large catalog, no prioritisation — No custom label structure. Google treating all SKUs equally. Budget flows to zero-converters.
-5. B2B making DTC transition — Decades of wholesale, new Shopify store, zero consumer acquisition experience.
-6. Formal RFP / multi-vendor eval — Structured selection process. Competing on criteria, not relationship.
-7. Small account / AOV constraint — Unit economics may not support the fee and the stated goal simultaneously.
-8. Multi-brand acquisition — Multiple brands, one decision-maker, inconsistent histories.
-9. Broken measurement — Platform data diverges from actual revenue. GA4 incomplete. Phone revenue invisible.
-10. Neglect pattern — Account on autopilot. Fewer than 10 changes per month. Google deciding without human oversight.
+1. ROAS-constrained - High ROAS target suppressing bids, pricing them out of auctions. Revenue declining while ROAS looks fine.
+2. Burned by previous agency - CVR or revenue dropped under prior management. Skeptical. Wants evidence not promises.
+3. Aggressive revenue goal - Target requires KPI improvement the data does not support. Board or investor-set number.
+4. Large catalog, no prioritisation - No custom label structure. Google treating all SKUs equally. Budget flows to zero-converters.
+5. B2B making DTC transition - Decades of wholesale, new Shopify store, zero consumer acquisition experience.
+6. Formal RFP / multi-vendor eval - Structured selection process. Competing on criteria, not relationship.
+7. Small account / AOV constraint - Unit economics may not support the fee and the stated goal simultaneously.
+8. Multi-brand acquisition - Multiple brands, one decision-maker, inconsistent histories.
+9. Broken measurement - Platform data diverges from actual revenue. GA4 incomplete. Phone revenue invisible.
+10. Neglect pattern - Account on autopilot. Fewer than 10 changes per month. Google deciding without human oversight.
 
-SCUBE SCOPE: Ads + Feed + Analytics — all three. The campaign is the output of the feed and the analytics. Most agencies only manage campaigns.
+SCUBE SCOPE: Ads + Feed + Analytics - all three. The campaign is the output of the feed and the analytics. Most agencies only manage campaigns.
 
 INTERPRETING SEARCH DATA:
 Shopping: if the prospect is absent from results for their category, that is a critical finding. If they appear but at higher prices than competitors, calculate the specific price delta. If competitors have far more reviews, flag it with numbers.
-Ads Transparency: 0 ads = neglect or new account. 1-5 = minimal activity. 10+ = active management. Note formats — Shopping-only vs Search+Shopping vs Video indicates scope of current program.
+Ads Transparency: 0 ads = neglect or new account. 1-5 = minimal activity. 10+ = active management. Note formats - Shopping-only vs Search+Shopping vs Video indicates scope of current program.
 SERP: competitors appearing in Shopping ads for the prospect's branded query means auction invasion. Organic position reveals brand health.
 Knowledge graph: absence for an established business may indicate weak branded search or limited digital presence.
 
 RULES:
-- Every key finding must cite something from the actual data — a position, a price, a seller name, an ad count.
-- The working_hypothesis must be specific enough to be embarrassing if wrong — it names the actual constraint with evidence.
+- Every key finding must cite something from the actual data.
+- The working_hypothesis must be specific enough to be falsifiable - it names the actual constraint with evidence.
 - Discovery questions must each cite a specific data point. Generic questions are not acceptable.
 - Never fabricate competitor names, prices, or metrics not present in the data.
 
-Return valid JSON only — no markdown fences, no preamble, no trailing text after the closing brace:
+Return valid JSON only - no markdown fences, no preamble, no trailing text after the closing brace:
 {
   "company_summary": "2-3 sentences describing the business. Reference at least one specific data point.",
   "platform": "Shopify / BigCommerce / WooCommerce / Magento / Custom / Unknown",
@@ -256,7 +262,7 @@ Return valid JSON only — no markdown fences, no preamble, no trailing text aft
   "why_scube_hook": "The single most compelling data-backed argument for SCUBE's three-layer scope"
 }`;
 
-// ─── Handler ───────────────────────────────────────────────────────────────────
+// --- Handler -----------------------------------------------------------------
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -278,18 +284,9 @@ export default async function handler(req, res) {
 
   const domain = extractDomain(website);
 
-  // Build shopping search query — use explicit productQuery if provided,
-  // otherwise clean goal text down to product terms.
-// Use explicit product query if provided, otherwise use the domain name
-  // as the shopping search term — this finds whether they appear in Shopping
-  // and who their competitors are. The domain name works better than
-  // stripping words from a goal sentence.
-  const shoppingQuery = productQuery || domain;
-  // Run all three SearchAPI calls in parallel
- // Run two Shopping searches in parallel:
-  // 1. Domain name — detects if prospect appears in Shopping and who competes
-  // 2. Product query — finds category competitors and pricing context
-  const productSearchQuery = productQuery || domain;
+  // Run Shopping searches in parallel.
+  // Always search the domain to detect if the prospect appears in Shopping.
+  // If a product query was provided, also search that for category/competitor context.
   const [shoppingDomain, shoppingProduct, ads, serp] = await Promise.all([
     fetchShopping(domain, SEARCHAPI_KEY),
     productQuery ? fetchShopping(productQuery, SEARCHAPI_KEY) : Promise.resolve({ results: [] }),
@@ -297,7 +294,8 @@ export default async function handler(req, res) {
     fetchSERP(domain, SEARCHAPI_KEY),
   ]);
 
-  // Merge: domain results first (prospect visibility), then product results (competitors)
+  // Merge: domain results first (prospect visibility), then product results
+  // (competitor context), deduplicated by title.
   const shopping = {
     results: [
       ...shoppingDomain.results,
@@ -306,8 +304,8 @@ export default async function handler(req, res) {
       ),
     ].slice(0, 10),
   };
-  const shoppingQuery = productSearchQuery;
 
+  const shoppingQuery = productQuery || domain;
   const dataBlock = buildDataBlock(domain, shoppingQuery, shopping, ads, serp);
 
   const userMessage = [
@@ -334,14 +332,13 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: "claude-sonnet-4-6",
-       max_tokens: 4000,
+        max_tokens: 4000,
         system: CLAUDE_SYSTEM,
         messages: [{ role: "user", content: userMessage }],
       }),
     });
 
     const anthropicData = await anthropicRes.json();
-
     if (!anthropicRes.ok) {
       return res.status(anthropicRes.status).json({
         error: anthropicData.error?.message || "Claude API error",
@@ -353,13 +350,12 @@ export default async function handler(req, res) {
       .map(b => b.text)
       .join("");
 
-    const brief = JSON.parse(text.replace(/```json|```/g, "").trim());
+    const clean = text.replace(/```json|```/g, "").trim();
+    const brief = JSON.parse(clean);
 
-    // Attach raw data so the frontend can render the source material
     brief._raw = { domain, query: shoppingQuery, shopping, ads, serp };
 
     return res.status(200).json(brief);
-
   } catch (e) {
     return res.status(500).json({ error: e.message || "Internal error" });
   }
