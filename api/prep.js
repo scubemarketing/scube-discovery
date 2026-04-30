@@ -184,96 +184,90 @@ async function fetchSERP(domain, apiKey) {
 // Passes all three Shopping searches separately so Claude can distinguish
 // brand presence from category presence from specific product pricing.
 
+// Classify a single Shopping result into one of three buckets:
+//   A = prospect's own direct listing (seller/link matches their domain)
+//   B = retailer carrying the prospect's brand (title has brand, seller is different)
+//   C = competitor (neither)
+function classifyResult(r, domain, brandName) {
+  const domainRoot = domain.replace(/\.(com|net|co|io|org|us).*$/, "");
+  const sellerL = (r.seller || "").toLowerCase();
+  const titleL  = (r.title  || "").toLowerCase();
+  const linkL   = (r.link   || "").toLowerCase();
+  const brandL  = brandName.toLowerCase();
+  const domainL = domainRoot.toLowerCase();
+
+  const isOwn =
+    sellerL.includes(domainL) ||
+    linkL.includes(domain.toLowerCase());
+
+  if (isOwn) return "A";
+
+  const carriesBrand =
+    titleL.includes(brandL) ||
+    sellerL.includes(brandL);
+
+  if (carriesBrand) return "B";
+
+  return "C";
+}
+
+function formatShoppingSearch(label, data, domain, brandName) {
+  const lines = [];
+  lines.push(`[${label}] query: "${data.query}"`);
+
+  if (!data.results || data.results.length === 0) {
+    lines.push(`  No results returned.${data.error ? " Error: " + data.error : ""}`);
+    return lines;
+  }
+
+  const bucketA = data.results.filter(r => classifyResult(r, domain, brandName) === "A");
+  const bucketB = data.results.filter(r => classifyResult(r, domain, brandName) === "B");
+  const bucketC = data.results.filter(r => classifyResult(r, domain, brandName) === "C");
+
+  if (bucketA.length > 0) {
+    lines.push(`  [BUCKET A - PROSPECT DIRECT LISTINGS - seller/link = ${domain}]`);
+    bucketA.forEach(r => lines.push(
+      `    #${r.position} | ${r.title} | ${r.price} | Seller: ${r.seller}` +
+      (r.rating ? ` | ${r.rating} stars (${r.reviews || 0} reviews)` : "")
+    ));
+  } else {
+    lines.push(`  [BUCKET A - PROSPECT DIRECT LISTINGS]: NONE - prospect's own domain not found as seller`);
+  }
+
+  if (bucketB.length > 0) {
+    lines.push(`  [BUCKET B - RETAILERS CARRYING ${brandName.toUpperCase()} PRODUCTS]`);
+    bucketB.forEach(r => lines.push(
+      `    #${r.position} | ${r.title} | ${r.price} | Seller: ${r.seller}` +
+      (r.rating ? ` | ${r.rating} stars (${r.reviews || 0} reviews)` : "")
+    ));
+  } else {
+    lines.push(`  [BUCKET B - RETAILERS CARRYING ${brandName.toUpperCase()} PRODUCTS]: NONE`);
+  }
+
+  if (bucketC.length > 0) {
+    lines.push(`  [BUCKET C - COMPETITORS]`);
+    bucketC.slice(0, 5).forEach(r => lines.push(
+      `    #${r.position} | ${r.title} | ${r.price} | Seller: ${r.seller}` +
+      (r.rating ? ` | ${r.rating} stars (${r.reviews || 0} reviews)` : "")
+    ));
+  }
+
+  return lines;
+}
+
 function buildDataBlock(domain, brandName, shoppingBrand, shoppingCategory, shoppingProduct, ads, serp) {
   const lines = ["=== REAL DATA COLLECTED ===\n"];
+  lines.push("SHOPPING DATA KEY:");
+  lines.push("  Bucket A = prospect selling direct (their own domain as seller) - measures direct channel effectiveness");
+  lines.push("  Bucket B = retailers carrying their products (brand in title, different seller) - measures market presence/distribution");
+  lines.push("  Bucket C = competitors (neither) - measures competitive landscape");
+  lines.push("  NOTE: Only Bucket A listings represent the prospect's own direct channel performance.\n");
 
-  // Shopping search 1: Brand name (did their own listings appear?)
-  lines.push(`[1a] GOOGLE SHOPPING - Brand search: "${shoppingBrand.query}"`);
-  lines.push(`     PURPOSE: Find prospect's own listings and confirm Shopping presence`);
-  if (shoppingBrand.results.length > 0) {
-    const prospectListings = shoppingBrand.results.filter(r =>
-      r.seller.toLowerCase().includes(brandName.toLowerCase()) ||
-      r.title.toLowerCase().includes(brandName.toLowerCase())
-    );
-    if (prospectListings.length > 0) {
-      lines.push(`     PROSPECT FOUND in brand search (${prospectListings.length} listings):`);
-      prospectListings.forEach(r => {
-        lines.push(`       #${r.position} | ${r.title} | ${r.price} | Seller: ${r.seller}`);
-      });
-      const others = shoppingBrand.results.filter(r => !prospectListings.includes(r));
-      if (others.length > 0) {
-        lines.push(`     Other sellers appearing for brand search:`);
-        others.slice(0, 3).forEach(r => {
-          lines.push(`       #${r.position} | ${r.title} | ${r.price} | Seller: ${r.seller}`);
-        });
-      }
-    } else {
-      lines.push(`     PROSPECT NOT FOUND in brand search results. Top results:`);
-      shoppingBrand.results.slice(0, 5).forEach(r => {
-        lines.push(`       #${r.position} | ${r.title} | ${r.price} | Seller: ${r.seller}`);
-      });
-    }
-  } else {
-    lines.push(`     No results returned for brand search.`);
-    if (shoppingBrand.error) lines.push(`     Error: ${shoppingBrand.error}`);
-  }
-
-  // Shopping search 2: Category (who wins the category?)
-  lines.push(`\n[1b] GOOGLE SHOPPING - Category search: "${shoppingCategory.query}"`);
-  lines.push(`     PURPOSE: Who wins category auctions and at what prices`);
-  if (shoppingCategory.results.length > 0) {
-    const prospectInCategory = shoppingCategory.results.filter(r =>
-      r.seller.toLowerCase().includes(brandName.toLowerCase()) ||
-      r.title.toLowerCase().includes(brandName.toLowerCase())
-    );
-    if (prospectInCategory.length > 0) {
-      lines.push(`     PROSPECT APPEARS in category results:`);
-      prospectInCategory.forEach(r => {
-        lines.push(`       #${r.position} | ${r.title} | ${r.price} | Seller: ${r.seller}` +
-          (r.rating ? ` | ${r.rating} stars (${r.reviews || 0} reviews)` : ""));
-      });
-    } else {
-      lines.push(`     PROSPECT ABSENT from category results. Dominant competitors:`);
-    }
-    shoppingCategory.results
-      .filter(r => !prospectInCategory.includes(r))
-      .slice(0, 6)
-      .forEach(r => {
-        lines.push(`       #${r.position} | ${r.title} | ${r.price} | Seller: ${r.seller}` +
-          (r.rating ? ` | ${r.rating} stars (${r.reviews || 0} reviews)` : ""));
-      });
-  } else {
-    lines.push(`     No results returned.`);
-    if (shoppingCategory.error) lines.push(`     Error: ${shoppingCategory.error}`);
-  }
-
-  // Shopping search 3: Specific product (pricing comparison)
-  lines.push(`\n[1c] GOOGLE SHOPPING - Product search: "${shoppingProduct.query}"`);
-  lines.push(`     PURPOSE: Specific product pricing and competitor landscape`);
-  if (shoppingProduct.results.length > 0) {
-    const prospectInProduct = shoppingProduct.results.filter(r =>
-      r.seller.toLowerCase().includes(brandName.toLowerCase()) ||
-      r.title.toLowerCase().includes(brandName.toLowerCase())
-    );
-    if (prospectInProduct.length > 0) {
-      lines.push(`     PROSPECT APPEARS in product results:`);
-      prospectInProduct.forEach(r => {
-        lines.push(`       #${r.position} | ${r.title} | ${r.price} | Seller: ${r.seller}`);
-      });
-    } else {
-      lines.push(`     PROSPECT ABSENT from product results.`);
-    }
-    shoppingProduct.results
-      .filter(r => !prospectInProduct.includes(r))
-      .slice(0, 5)
-      .forEach(r => {
-        lines.push(`       #${r.position} | ${r.title} | ${r.price} | Seller: ${r.seller}` +
-          (r.rating ? ` | ${r.rating} stars (${r.reviews || 0} reviews)` : ""));
-      });
-  } else {
-    lines.push(`     No results returned.`);
-    if (shoppingProduct.error) lines.push(`     Error: ${shoppingProduct.error}`);
-  }
+  lines.push(...formatShoppingSearch("1a BRAND SEARCH", shoppingBrand, domain, brandName));
+  lines.push("");
+  lines.push(...formatShoppingSearch("1b CATEGORY SEARCH", shoppingCategory, domain, brandName));
+  lines.push("");
+  lines.push(...formatShoppingSearch("1c PRODUCT SEARCH", shoppingProduct, domain, brandName));
 
   // Ads Transparency
   lines.push(`\n[2] GOOGLE ADS TRANSPARENCY - domain: ${domain}`);
@@ -328,15 +322,33 @@ const CLAUDE_SYSTEM = `You are a senior paid media strategist at SCUBE Marketing
 
 You have a prospect intake form and REAL DATA from five live searches: three Google Shopping searches (brand, category, and product level), Google Ads Transparency Center, and Google SERP. Use this real data as your primary evidence.
 
-UNDERSTANDING THE THREE SHOPPING SEARCHES:
-- Search 1a (Brand search): Did the prospect's own listings appear? If yes, they have Shopping presence. If no, either they are not in Shopping or their titles do not match their brand name.
-- Search 1b (Category search): Who wins the generic category terms? Prospect absent here is normal for niche brands - it means they win on specifics but not on broad terms.
-- Search 1c (Product search): Pricing comparison on specific products. Who is cheaper, who has more reviews, who has better delivery.
+UNDERSTANDING THE THREE SHOPPING SEARCHES AND THREE BUCKETS:
+Each Shopping search classifies results into three buckets. This distinction is critical:
+
+BUCKET A = Prospect's own direct listings (seller or link matches their domain).
+  This measures their DIRECT CHANNEL effectiveness. If Bucket A is empty across all three searches,
+  the prospect has no direct Shopping presence regardless of what retailers are doing.
+
+BUCKET B = Retailers carrying the prospect's products (brand name in title, different seller).
+  This measures MARKET PRESENCE and distribution reach. Bucket B results confirm the brand has
+  demand and retail distribution but tell you nothing about their own channel performance.
+  A prospect can have many Bucket B results and zero Bucket A results simultaneously.
+
+BUCKET C = Competitors (neither the brand nor their products).
+  This is the competitive landscape they must compete against for direct channel growth.
 
 CRITICAL RULE ON SHOPPING PRESENCE:
-- If the prospect appeared in ANY of the three Shopping searches, their presence is NOT absent. Use "weak", "moderate", or "strong" based on position and volume.
-- Only mark "absent" if the prospect did not appear in ANY of the three searches.
-- Ads Transparency showing active Shopping ads confirms they are running Shopping ads even if they do not appear in our three specific searches.
+- Base shopping_presence ONLY on Bucket A results (their own direct listings).
+- Bucket B results (retailer listings) do NOT count as the prospect's Shopping presence.
+- If Bucket A is empty in all three searches but Bucket B has results: shopping_presence = "absent"
+  but note the distribution finding separately in shopping_position.
+- If Ads Transparency shows active Shopping ads but Bucket A is empty, flag this as a critical
+  finding: they are paying for Shopping ads but may not be winning impressions for their own domain.
+- shopping_presence scale based on Bucket A only:
+    strong = Bucket A appears in 2-3 searches, positions 1-5
+    moderate = Bucket A appears in 1-2 searches, any position
+    weak = Bucket A appears in only brand search or positions 6-10
+    absent = Bucket A empty in all three searches
 
 THE 10 SCENARIO TYPES:
 1. ROAS-constrained - High ROAS target suppressing bids. Revenue declining while ROAS looks fine.
@@ -366,8 +378,8 @@ Return valid JSON only - no markdown fences, no preamble, no trailing text:
   "catalog_estimate": "SKU range from visible signals",
   "aov_estimate": "AOV range from actual prices in Shopping data",
   "spend_estimate": "estimated monthly ad spend range",
-  "shopping_presence": "strong / moderate / weak / absent",
-  "shopping_position": "Specific finding citing which searches they appeared in, positions, and prices vs competitors",
+  "shopping_presence": "strong / moderate / weak / absent - based on Bucket A (own direct listings) ONLY",
+  "shopping_position": "Cite Bucket A count, Bucket B count, and Bucket C competitors. Example: 'Zero direct listings (Bucket A). Brand carried by 3 retailers including Extreme Power House (Bucket B). Category dominated by CompA and CompB at $X-$Y (Bucket C).'",
   "ads_activity": "active (N ads) / inactive / unknown",
   "ads_finding": "Specific finding from Transparency data - formats, count, dates, and what this signals",
   "competitor_names": ["name1", "name2", "name3"],

@@ -83,49 +83,87 @@ const goalMeta = {
 
 // ─── Raw data panel ────────────────────────────────────────────
 
-function ShoppingTable({ data, label, purpose, brandName }) {
+// Classify a result into one of three buckets:
+//   A = prospect's own direct listing (seller/link matches their domain)
+//   B = retailer carrying the prospect's brand (brand in title, different seller)
+//   C = competitor
+function classifyResult(r, domain, brandName) {
+  const domainRoot = (domain || "").replace(/\.(com|net|co|io|org|us).*$/, "");
+  const sellerL = (r.seller || "").toLowerCase();
+  const titleL  = (r.title  || "").toLowerCase();
+  const linkL   = (r.link   || "").toLowerCase();
+  const brandL  = (brandName || "").toLowerCase();
+  const domainL = domainRoot.toLowerCase();
+  const isOwn   = sellerL.includes(domainL) || linkL.includes((domain || "").toLowerCase());
+  if (isOwn) return "A";
+  if (titleL.includes(brandL) || sellerL.includes(brandL)) return "B";
+  return "C";
+}
+
+const bucketStyle = {
+  A: { bg:C.tealL,        badge:"DIRECT",     badgeCol:C.teal, priceCol:C.teal   },
+  B: { bg:C.navyL,        badge:"RETAILER",   badgeCol:C.navy, priceCol:C.navy   },
+  C: { bg:"transparent",  badge:"COMPETITOR", badgeCol:C.mid,  priceCol:C.gray   },
+};
+
+function ShoppingTable({ data, label, purpose, domain, brandName }) {
   if (!data) return null;
   const results = data.results || [];
+  const counts = { A:0, B:0, C:0 };
+  results.forEach(r => { const b = classifyResult(r, domain, brandName); counts[b]++; });
+
   return (
-    <div style={{ marginBottom:16 }}>
-      <div style={{ display:"flex", alignItems:"baseline", gap:8, marginBottom:4, flexWrap:"wrap" }}>
+    <div style={{ marginBottom:20 }}>
+      <div style={{ display:"flex", alignItems:"baseline", gap:8, marginBottom:6, flexWrap:"wrap" }}>
         <div style={{ fontSize:12, fontWeight:700, color:C.navy }}>{label}</div>
         <div style={{ fontSize:11, color:C.mid, fontStyle:"italic" }}>{purpose}</div>
         <div style={{ fontSize:11, color:C.mid, marginLeft:"auto" }}>query: "{data.query}"</div>
       </div>
       {results.length > 0 ? (
-        <div style={{ overflowX:"auto" }}>
-          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-            <thead>
-              <tr style={{ background:C.light }}>
-                {["#","Product","Price","Seller","Rating"].map(h => (
-                  <th key={h} style={{ padding:"5px 8px", textAlign:"left", color:C.mid, fontWeight:600, borderBottom:`1px solid ${C.border}`, whiteSpace:"nowrap" }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {results.map((r, i) => {
-                const bn = (brandName || "").toLowerCase();
-                const isProspect = bn && (
-                  (r.seller || "").toLowerCase().includes(bn) ||
-                  (r.title  || "").toLowerCase().includes(bn)
-                );
-                return (
-                  <tr key={i} style={{ borderBottom:`1px solid ${C.border}`, background: isProspect ? C.tealL : "transparent" }}>
-                    <td style={{ padding:"5px 8px", color:C.mid, fontWeight:700 }}>{r.position}</td>
-                    <td style={{ padding:"5px 8px", color:C.dark, maxWidth:240, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }} title={r.title}>
-                      {isProspect && <span style={{ color:C.teal, fontWeight:700, marginRight:4 }}>&#9733;</span>}
-                      {r.title}
-                    </td>
-                    <td style={{ padding:"5px 8px", color: isProspect ? C.teal : C.gray, fontWeight: isProspect ? 700 : 400 }}>{r.price||"—"}</td>
-                    <td style={{ padding:"5px 8px", color:C.gray }}>{r.seller||"—"}</td>
-                    <td style={{ padding:"5px 8px", color:C.gray, whiteSpace:"nowrap" }}>{r.rating ? `${r.rating}★ (${r.reviews||0})` : "—"}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <>
+          <div style={{ display:"flex", gap:8, marginBottom:8, flexWrap:"wrap" }}>
+            <span style={{ fontSize:11, fontWeight:700, color:C.teal, background:C.tealL, padding:"2px 8px", borderRadius:3 }}>
+              {counts.A} Direct (own domain)
+            </span>
+            <span style={{ fontSize:11, fontWeight:700, color:C.navy, background:C.navyL, padding:"2px 8px", borderRadius:3 }}>
+              {counts.B} Retailer (carrying brand)
+            </span>
+            <span style={{ fontSize:11, fontWeight:700, color:C.mid, background:C.light, padding:"2px 8px", borderRadius:3 }}>
+              {counts.C} Competitor
+            </span>
+          </div>
+          <div style={{ overflowX:"auto" }}>
+            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+              <thead>
+                <tr style={{ background:C.light }}>
+                  {["#","Type","Product","Price","Seller","Rating"].map(h => (
+                    <th key={h} style={{ padding:"5px 8px", textAlign:"left", color:C.mid, fontWeight:600, borderBottom:`1px solid ${C.border}`, whiteSpace:"nowrap" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {results.map((r, i) => {
+                  const bucket = classifyResult(r, domain, brandName);
+                  const st = bucketStyle[bucket];
+                  return (
+                    <tr key={i} style={{ borderBottom:`1px solid ${C.border}`, background:st.bg }}>
+                      <td style={{ padding:"5px 8px", color:C.mid, fontWeight:700 }}>{r.position}</td>
+                      <td style={{ padding:"5px 8px", whiteSpace:"nowrap" }}>
+                        <span style={{ fontSize:10, fontWeight:700, color:st.badgeCol, background:st.bg, padding:"1px 6px", borderRadius:2, border:`1px solid ${st.badgeCol}40` }}>
+                          {st.badge}
+                        </span>
+                      </td>
+                      <td style={{ padding:"5px 8px", color:C.dark, maxWidth:220, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }} title={r.title}>{r.title}</td>
+                      <td style={{ padding:"5px 8px", color:st.priceCol, fontWeight: bucket === "A" ? 700 : 400 }}>{r.price || "—"}</td>
+                      <td style={{ padding:"5px 8px", color:C.gray }}>{r.seller || "—"}</td>
+                      <td style={{ padding:"5px 8px", color:C.gray, whiteSpace:"nowrap" }}>{r.rating ? `${r.rating}★ (${r.reviews||0})` : "—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
       ) : (
         <div style={{ fontSize:12, color:C.mid, fontStyle:"italic", padding:"6px 0" }}>
           No results.{data.error && ` Error: ${data.error}`}
@@ -162,15 +200,19 @@ function RawDataPanel({ raw }) {
             <div style={{ color:C.gray }}>Q1 Brand: <strong>"{queries.q1}"</strong> — finds prospect's own listings</div>
             <div style={{ color:C.gray }}>Q2 Category: <strong>"{queries.q2}"</strong> — finds category competitors</div>
             <div style={{ color:C.gray }}>Q3 Product: <strong>"{queries.q3}"</strong> — specific product pricing</div>
-            {brandName && <div style={{ color:C.teal, marginTop:4 }}>★ highlighted rows = prospect identified as <strong>{brandName}</strong></div>}
+            <div style={{ marginTop:6, display:"flex", gap:8, flexWrap:"wrap" }}>
+              <span style={{ fontSize:11, fontWeight:700, color:C.teal, background:C.tealL, padding:"2px 8px", borderRadius:3 }}>DIRECT = prospect's own domain as seller</span>
+              <span style={{ fontSize:11, fontWeight:700, color:C.navy, background:C.navyL, padding:"2px 8px", borderRadius:3 }}>RETAILER = third party carrying their brand</span>
+              <span style={{ fontSize:11, fontWeight:700, color:C.mid, background:C.light, padding:"2px 8px", borderRadius:3 }}>COMPETITOR = neither</span>
+            </div>
           </div>
 
           {/* Three Shopping searches */}
           <div style={{ marginTop:16 }}>
             <SHead title="Google Shopping — 3 Searches" col={C.navy} />
-            <ShoppingTable data={raw.shopping && raw.shopping.brand}    label="Search 1: Brand"    purpose="Did prospect's own listings appear?" brandName={brandName} />
-            <ShoppingTable data={raw.shopping && raw.shopping.category} label="Search 2: Category" purpose="Who wins the category?" brandName={brandName} />
-            <ShoppingTable data={raw.shopping && raw.shopping.product}  label="Search 3: Product"  purpose="Specific product pricing" brandName={brandName} />
+            <ShoppingTable data={raw.shopping && raw.shopping.brand}    label="Search 1: Brand"    purpose="Did prospect's own listings appear?" domain={raw.domain} brandName={brandName} />
+            <ShoppingTable data={raw.shopping && raw.shopping.category} label="Search 2: Category" purpose="Who wins the category?" domain={raw.domain} brandName={brandName} />
+            <ShoppingTable data={raw.shopping && raw.shopping.product}  label="Search 3: Product"  purpose="Specific product pricing" domain={raw.domain} brandName={brandName} />
           </div>
 
           {/* Ads Transparency */}
