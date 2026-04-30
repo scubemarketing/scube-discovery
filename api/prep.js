@@ -280,21 +280,33 @@ export default async function handler(req, res) {
 
   // Build shopping search query — use explicit productQuery if provided,
   // otherwise clean goal text down to product terms.
-  const shoppingQuery = (
-    productQuery ||
-    goal
-      .replace(/\b(grow|increase|improve|scale|achieve|reach|hit|drive|boost|maximize|maximise|revenue|roas|google|ads|from|to|per month|monthly|our|we|want|need|goal|target|help)\b/gi, "")
-      .replace(/\$[\d,]+k?/gi, "")
-      .replace(/\s{2,}/g, " ")
-      .trim()
-  ).slice(0, 80) || domain;
-
+// Use explicit product query if provided, otherwise use the domain name
+  // as the shopping search term — this finds whether they appear in Shopping
+  // and who their competitors are. The domain name works better than
+  // stripping words from a goal sentence.
+  const shoppingQuery = productQuery || domain;
   // Run all three SearchAPI calls in parallel
-  const [shopping, ads, serp] = await Promise.all([
-    fetchShopping(shoppingQuery, SEARCHAPI_KEY),
+ // Run two Shopping searches in parallel:
+  // 1. Domain name — detects if prospect appears in Shopping and who competes
+  // 2. Product query — finds category competitors and pricing context
+  const productSearchQuery = productQuery || domain;
+  const [shoppingDomain, shoppingProduct, ads, serp] = await Promise.all([
+    fetchShopping(domain, SEARCHAPI_KEY),
+    productQuery ? fetchShopping(productQuery, SEARCHAPI_KEY) : Promise.resolve({ results: [] }),
     fetchAdsTransparency(domain, SEARCHAPI_KEY),
     fetchSERP(domain, SEARCHAPI_KEY),
   ]);
+
+  // Merge: domain results first (prospect visibility), then product results (competitors)
+  const shopping = {
+    results: [
+      ...shoppingDomain.results,
+      ...shoppingProduct.results.filter(r =>
+        !shoppingDomain.results.some(d => d.title === r.title)
+      ),
+    ].slice(0, 10),
+  };
+  const shoppingQuery = productSearchQuery;
 
   const dataBlock = buildDataBlock(domain, shoppingQuery, shopping, ads, serp);
 
