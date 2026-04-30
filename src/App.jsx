@@ -207,52 +207,78 @@ function RawDataPanel({ raw }) {
 
 // ─── Copy text builder ────────────────────────────────────────────────────────
 
-function buildCopyText(r, form) {
-  return [
-    "SCUBE DISCOVERY PREP BRIEF",
-    `Prospect: ${form.name} | ${form.website}`,
-    `Date: ${new Date().toLocaleDateString()}`,
-    "",
-    "COMPANY",
-    r.company_summary,
-    "",
-    "ACCOUNT SIGNALS (real data)",
-    `Platform: ${r.platform}`,
-    `Catalog estimate: ${r.catalog_estimate}`,
-    `AOV estimate: ${r.aov_estimate}`,
-    `Spend estimate: ${r.spend_estimate}`,
-    `Shopping presence: ${r.shopping_presence}`,
-    `Shopping position: ${r.shopping_position}`,
-    `Ads activity: ${r.ads_activity}`,
-    `Ads finding: ${r.ads_finding}`,
-    `Competitors: ${(r.competitor_names||[]).join(", ")||"none identified"}`,
-    `Competitor advantage: ${r.competitor_advantage}`,
-    `Previous agency: ${r.previous_agency_signals}`,
-    "",
-    "SCENARIO",
-    `Primary: #${r.scenario_primary?.number} ${r.scenario_primary?.name} (${r.scenario_primary?.confidence})`,
-    r.scenario_primary?.reasoning,
-    r.scenario_secondary ? `Also possible: #${r.scenario_secondary?.number} ${r.scenario_secondary?.name} — ${r.scenario_secondary?.reasoning}` : "",
-    "",
-    "WORKING HYPOTHESIS",
-    r.working_hypothesis,
-    "",
-    `GOAL ASSESSMENT: ${goalMeta[r.goal_assessment]?.lbl || r.goal_assessment}`,
-    r.goal_reasoning,
-    "",
-    `AUDIENCE TYPE: ${r.audience_type?.replace(/_/g," ")}`,
-    r.audience_reasoning,
-    "",
-    ...(r.red_flags?.filter(Boolean).length ? ["RED FLAGS", ...r.red_flags.filter(Boolean).map(f=>`- ${f}`), ""] : []),
-    "DISCOVERY QUESTIONS",
-    ...(r.discovery_questions||[]).map(q=>`${q.priority}. ${q.question}\n   Why: ${q.why}`),
-    "",
-    "PERSONAL COST ANGLE",
-    r.personal_cost_angle,
-    "",
-    "WHY SCUBE HOOK",
-    r.why_scube_hook,
-  ].filter(l => l !== undefined).join("\n");
+function buildCopyHTML(r, form) {
+  const gMeta = {
+    realistic: "Realistic",
+    aggressive: "Aggressive but possible",
+    requires_conversation: "Requires conversation",
+  };
+  const h = (tag, text, style = "") =>
+    `<${tag}${style ? ` style="${style}"` : ""}>${text}</${tag}>`;
+  const bold = (label, value) =>
+    `<p style="margin:4px 0"><b>${label}:</b> ${value || "—"}</p>`;
+  const divider = `<hr style="border:none;border-top:1px solid #DDDDDD;margin:16px 0"/>`;
+
+  const sections = [
+    h("h1", "SCUBE Discovery Prep Brief", "font-family:Arial,sans-serif;font-size:20px;color:#1A1A1A;margin:0 0 4px 0"),
+    h("p", `${form.name} &nbsp;|&nbsp; ${form.website} &nbsp;|&nbsp; ${new Date().toLocaleDateString()}`, "font-family:Arial,sans-serif;font-size:13px;color:#666666;margin:0 0 16px 0"),
+    divider,
+
+    h("h2", "Company Overview", "font-family:Arial,sans-serif;font-size:14px;color:#2E4FC0;text-transform:uppercase;letter-spacing:1px;margin:16px 0 8px 0"),
+    h("p", r.company_summary, "font-family:Arial,sans-serif;font-size:13px;color:#333333;line-height:1.6;margin:0 0 16px 0"),
+    divider,
+
+    h("h2", "Account Signals", "font-family:Arial,sans-serif;font-size:14px;color:#2E4FC0;text-transform:uppercase;letter-spacing:1px;margin:16px 0 8px 0"),
+    bold("Platform", r.platform),
+    bold("Catalog estimate", r.catalog_estimate),
+    bold("AOV estimate", r.aov_estimate),
+    bold("Spend estimate", r.spend_estimate),
+    bold("Shopping presence", r.shopping_presence),
+    bold("Shopping position", r.shopping_position),
+    bold("Ads activity", r.ads_activity),
+    bold("Ads finding", r.ads_finding),
+    bold("Competitors", (r.competitor_names || []).filter(Boolean).join(", ") || "none identified"),
+    bold("Competitor advantage", r.competitor_advantage),
+    bold("Previous agency", r.previous_agency_signals),
+    divider,
+
+    h("h2", "Scenario Identification", "font-family:Arial,sans-serif;font-size:14px;color:#FF3C66;text-transform:uppercase;letter-spacing:1px;margin:16px 0 8px 0"),
+    h("p", `<b>Primary: #${r.scenario_primary?.number} ${r.scenario_primary?.name}</b> (${r.scenario_primary?.confidence} confidence)`, "font-family:Arial,sans-serif;font-size:13px;color:#333333;margin:4px 0"),
+    h("p", r.scenario_primary?.reasoning, "font-family:Arial,sans-serif;font-size:13px;color:#333333;margin:4px 0 8px 0"),
+    r.scenario_secondary
+      ? h("p", `<b>Also possible: #${r.scenario_secondary.number} ${r.scenario_secondary.name}</b> — ${r.scenario_secondary.reasoning}`, "font-family:Arial,sans-serif;font-size:13px;color:#666666;margin:4px 0")
+      : "",
+    bold("Goal assessment", gMeta[r.goal_assessment] || r.goal_assessment),
+    h("p", r.goal_reasoning, "font-family:Arial,sans-serif;font-size:13px;color:#666666;margin:4px 0 8px 0"),
+    bold("Audience type", r.audience_type?.replace(/_/g, " ")),
+    h("p", r.audience_reasoning, "font-family:Arial,sans-serif;font-size:13px;color:#666666;margin:4px 0"),
+    divider,
+
+    h("h2", "Working Hypothesis", "font-family:Arial,sans-serif;font-size:14px;color:#00A3A2;text-transform:uppercase;letter-spacing:1px;margin:16px 0 8px 0"),
+    h("p", `<b>${r.working_hypothesis}</b>`, "font-family:Arial,sans-serif;font-size:14px;color:#1A1A1A;line-height:1.6;margin:0 0 16px 0"),
+    divider,
+
+    ...(r.red_flags?.filter(Boolean).length ? [
+      h("h2", "Red Flags", "font-family:Arial,sans-serif;font-size:14px;color:#FF3C66;text-transform:uppercase;letter-spacing:1px;margin:16px 0 8px 0"),
+      r.red_flags.filter(Boolean).map(f => h("p", `⚠ ${f}`, "font-family:Arial,sans-serif;font-size:13px;color:#333333;margin:4px 0")).join(""),
+      divider,
+    ] : []),
+
+    h("h2", "Prioritised Discovery Questions", "font-family:Arial,sans-serif;font-size:14px;color:#2E4FC0;text-transform:uppercase;letter-spacing:1px;margin:16px 0 8px 0"),
+    ...(r.discovery_questions || []).map(q => [
+      h("p", `<b>${q.priority}. "${q.question}"</b>`, "font-family:Arial,sans-serif;font-size:13px;color:#1A1A1A;margin:8px 0 2px 0"),
+      h("p", `Why: ${q.why}`, "font-family:Arial,sans-serif;font-size:12px;color:#666666;margin:0 0 8px 0"),
+    ].join("")),
+    divider,
+
+    h("h2", "Personal Cost Angle", "font-family:Arial,sans-serif;font-size:14px;color:#F27643;text-transform:uppercase;letter-spacing:1px;margin:16px 0 8px 0"),
+    h("p", r.personal_cost_angle, "font-family:Arial,sans-serif;font-size:13px;color:#333333;line-height:1.6;margin:0 0 16px 0"),
+
+    h("h2", "Why SCUBE Hook", "font-family:Arial,sans-serif;font-size:14px;color:#FF3C66;text-transform:uppercase;letter-spacing:1px;margin:16px 0 8px 0"),
+    h("p", r.why_scube_hook, "font-family:Arial,sans-serif;font-size:13px;color:#333333;line-height:1.6;margin:0"),
+  ];
+
+  return sections.flat().join("");
 }
 
 // ─── Main app ─────────────────────────────────────────────────────────────────
@@ -306,10 +332,20 @@ export default function App() {
     }
   }
 
-  function copy() {
+function copy() {
     if (!result) return;
-    navigator.clipboard.writeText(buildCopyText(result, form))
-      .then(() => { setCopied(true); setTimeout(() => setCopied(false), 2500); });
+    const html = buildCopyHTML(result, form);
+    const blob = new Blob([html], { type: "text/html" });
+    const item = new ClipboardItem({ "text/html": blob });
+    navigator.clipboard.write([item])
+      .then(() => { setCopied(true); setTimeout(() => setCopied(false), 2500); })
+      .catch(() => {
+        // Fallback: plain text if HTML clipboard not supported
+        const plain = document.createElement("div");
+        plain.innerHTML = html;
+        navigator.clipboard.writeText(plain.innerText)
+          .then(() => { setCopied(true); setTimeout(() => setCopied(false), 2500); });
+      });
   }
 
   return (
