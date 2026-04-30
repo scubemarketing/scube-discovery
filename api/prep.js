@@ -52,7 +52,9 @@ async function fetchShopping(query, apiKey) {
 async function fetchAdsTransparency(domain, apiKey) {
   const params = new URLSearchParams({
     engine: "google_ads_transparency_center",
-    advertiser_domain: domain,
+    domain: domain,
+    region: "US",
+    time_period: "last_30_days",
     api_key: apiKey,
   });
   try {
